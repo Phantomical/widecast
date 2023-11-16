@@ -1,10 +1,16 @@
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
-use arc_swap::{ArcSwapOption, DefaultStrategy, Guard};
+use arc_swap::{ArcSwapAny, DefaultStrategy, Guard};
+use triomphe::{Arc, UniqueArc};
+
+use crate::refcnt::ArcWrap;
 
 pub(crate) struct ArcBuffer<T> {
-    values: Vec<ArcSwapOption<T>>,
+    values: Vec<ArcSwapAny<ArcWrap<T>>>,
+
+    // The align(64) ensures that these two values should be in their own cache
+    // line.
     head: AtomicU64,
     tail: AtomicU64,
 }
@@ -13,7 +19,7 @@ impl<T> ArcBuffer<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         let mut values = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            values.push(ArcSwapOption::new(None));
+            values.push(ArcSwapAny::default());
         }
 
         Self {
@@ -31,21 +37,25 @@ impl<T> ArcBuffer<T> {
 
     /// Push a new value at the end of the ringbuffer.
     ///
+    /// # Safety
     /// This may not be called concurrently.
-    pub fn push(&self, value: Arc<T>) -> Option<Arc<T>> {
-        BufferState::new(self).push(value)
+    pub fn push(&self, value: T, cache: &mut ArcCache<T>) {
+        BufferState::new(self).push(value, cache);
     }
 
     /// Push a set of values in bulk to the end of the ringbuffer.
-    pub fn push_bulk<I>(&self, iter: I)
+    ///
+    /// # Safety
+    /// This may not be called concurrently.
+    pub fn push_bulk<I>(&self, iter: I, cache: &mut ArcCache<T>)
     where
-        I: Iterator<Item = Arc<T>>,
+        I: Iterator<Item = T>,
     {
-        BufferState::new(self).push_bulk(iter);
+        BufferState::new(self).push_bulk(iter, cache);
     }
 
     /// Get the value contained within this ringbuffer at the given index.
-    pub fn get(&self, index: u64) -> Result<Guard<Option<Arc<T>>, DefaultStrategy>, IndexError> {
+    pub fn get(&self, index: u64) -> Result<Guard<ArcWrap<T>, DefaultStrategy>, IndexError> {
         let idx = self.index(index);
         let head = self.head.load(Ordering::Acquire);
         if index > head {
@@ -86,6 +96,42 @@ pub(crate) enum IndexError {
     Invalid,
 }
 
+pub(crate) struct ArcCache<T>(Option<UniqueArc<MaybeUninit<T>>>);
+
+impl<T> ArcCache<T> {
+    pub(crate) fn new() -> Self {
+        Self(None)
+    }
+
+    /// Move `value` in to an `Arc`, reusing the cached on if possible.
+    fn alloc(&mut self, value: T) -> Arc<T> {
+        let mut uninit = match self.0.take() {
+            Some(arc) => arc,
+            None => UniqueArc::new_uninit(),
+        };
+
+        uninit.write(value);
+
+        // SAFETY: We just initialized it in the line above.
+        unsafe { UniqueArc::assume_init(uninit) }.shareable()
+    }
+
+    fn free(&mut self, arc: Option<Arc<T>>) {
+        let arc = match arc.map(Arc::try_unique) {
+            Some(Ok(unique)) => unique,
+            _ => return,
+        };
+
+        // SAFETY: Transmute to MaybeUninit<T> from T is always safe.
+        let mut uninit: UniqueArc<MaybeUninit<T>> = unsafe { std::mem::transmute(arc) };
+
+        // SAFETY: We just created this MaybeUninit from an initialized UniqueArc
+        unsafe { uninit.assume_init_drop() };
+
+        self.0 = Some(uninit);
+    }
+}
+
 struct BufferState<'b, T> {
     buffer: &'b ArcBuffer<T>,
 
@@ -96,7 +142,6 @@ struct BufferState<'b, T> {
 impl<'b, T> BufferState<'b, T> {
     /// Load the `BufferState` from the buffer.
     ///
-    /// # Safety
     /// This may not be called from multiple threads concurrently.
     pub fn new(buffer: &'b ArcBuffer<T>) -> Self {
         let head = buffer.head.load(Ordering::Relaxed);
@@ -126,10 +171,12 @@ impl<'b, T> BufferState<'b, T> {
     }
 
     pub fn swap_raw(&self, index: usize, value: Arc<T>) -> Option<Arc<T>> {
-        self.buffer.values[index].swap(Some(value))
+        self.buffer.values[index].swap(ArcWrap(Some(value))).0
     }
 
-    pub fn push(&mut self, value: Arc<T>) -> Option<Arc<T>> {
+    pub fn push(&mut self, value: T, cache: &mut ArcCache<T>) {
+        let value = cache.alloc(value);
+
         self.reserve(1);
 
         let index = self.index(self.head + 1);
@@ -137,12 +184,12 @@ impl<'b, T> BufferState<'b, T> {
 
         self.advance(1);
 
-        prev
+        cache.free(prev);
     }
 
-    pub fn push_bulk<I>(&mut self, mut iter: I)
+    pub fn push_bulk<I>(&mut self, mut iter: I, cache: &mut ArcCache<T>)
     where
-        I: Iterator<Item = Arc<T>>,
+        I: Iterator<Item = T>,
     {
         let estimate = iter.size_hint().0 as u64;
         let saved_tail = self.tail;
@@ -152,10 +199,6 @@ impl<'b, T> BufferState<'b, T> {
         self.reserve(estimate);
 
         for offset in 0..estimate {
-            // Explicitly drop prev within the scopeguard so that if the drop
-            // panics then we restore the buffer to a valid state.
-            let _ = prev.take();
-
             // In case of panic or early exit we need to fix up indices.
             //
             // Since we are moving the tail backwards this may cause readers to
@@ -169,14 +212,19 @@ impl<'b, T> BufferState<'b, T> {
                 self.advance(offset);
             });
 
+            // Explicitly drop prev within the scopeguard so that if the drop
+            // panics then we restore the buffer to a valid state.
+            cache.free(prev.take());
+
             let value = match iter.next() {
-                Some(value) => value,
+                Some(value) => cache.alloc(value),
                 None => return,
             };
 
             std::mem::forget(guard);
 
             prev = self.swap_raw(index, value);
+
             index += 1;
             if index >= self.buffer.capacity() {
                 index -= self.buffer.capacity();
@@ -184,10 +232,10 @@ impl<'b, T> BufferState<'b, T> {
         }
 
         self.advance(estimate);
-        drop(prev);
+        cache.free(prev);
 
-        while let Some(value) = iter.next() {
-            self.push(value);
+        for value in iter {
+            self.push(value, cache);
         }
     }
 }

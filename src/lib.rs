@@ -1,3 +1,6 @@
+//! A single-writer multiple-reader broadcast queue optimized for large numbers
+//! of readers.
+
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
@@ -5,13 +8,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+use arcbuf::ArcCache;
 use crossbeam_queue::SegQueue;
 
 use crate::arcbuf::{ArcBuffer, IndexError};
+use crate::refcnt::ArcWrap;
 use crate::thread_id::thread_id;
 
 mod arcbuf;
 mod error;
+mod refcnt;
 mod thread_id;
 
 pub use crate::error::{RecvError, TryRecvError};
@@ -36,6 +42,7 @@ impl<T> Shared<T> {
 
 pub struct Sender<T> {
     shared: Arc<Shared<T>>,
+    cache: ArcCache<T>,
 }
 
 impl<T> Sender<T> {
@@ -46,7 +53,10 @@ impl<T> Sender<T> {
             queues: std::array::from_fn(|_| SegQueue::new()),
         });
 
-        Self { shared }
+        Self {
+            shared,
+            cache: ArcCache::new(),
+        }
     }
 
     pub fn subscribe(&self) -> Receiver<T> {
@@ -54,12 +64,12 @@ impl<T> Sender<T> {
     }
 
     pub fn send(&mut self, value: T) {
-        self.shared.buffer.push(Arc::new(value));
+        self.shared.buffer.push(value, &mut self.cache);
         self.wake_receivers();
     }
 
     pub fn bulk_send<I: Iterator<Item = T>>(&mut self, iter: I) {
-        self.shared.buffer.push_bulk(iter.map(Arc::new));
+        self.shared.buffer.push_bulk(iter, &mut self.cache);
         self.wake_receivers();
     }
 
@@ -119,6 +129,10 @@ impl<T> Receiver<T> {
             }
         }
     }
+
+    pub fn resubscribe(&self) -> Self {
+        Self::new(self.shared.clone())
+    }
 }
 
 impl<T> Clone for Receiver<T> {
@@ -131,15 +145,15 @@ impl<T> Clone for Receiver<T> {
 }
 
 pub struct Guard<T> {
-    guard: arc_swap::Guard<Option<Arc<T>>, arc_swap::DefaultStrategy>,
+    guard: arc_swap::Guard<ArcWrap<T>, arc_swap::DefaultStrategy>,
 }
 
 impl<T> Deref for Guard<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        match &*self.guard {
-            Some(value) => &value,
+        match &self.guard.0 {
+            Some(value) => value,
             None => unreachable!(),
         }
     }
@@ -166,11 +180,9 @@ impl<'a, T> Future for Recv<'a, T> {
         queue.push(cx.waker().clone());
 
         match self.rx.try_recv() {
-            Ok(guard) => return Poll::Ready(Ok(guard)),
-            Err(TryRecvError::Closed) => return Poll::Ready(Err(RecvError::Closed)),
-            Err(TryRecvError::Lagged(skipped)) => {
-                return Poll::Ready(Err(RecvError::Lagged(skipped)))
-            }
+            Ok(guard) => Poll::Ready(Ok(guard)),
+            Err(TryRecvError::Closed) => Poll::Ready(Err(RecvError::Closed)),
+            Err(TryRecvError::Lagged(skipped)) => Poll::Ready(Err(RecvError::Lagged(skipped))),
             Err(TryRecvError::Empty) => Poll::Pending,
         }
     }
