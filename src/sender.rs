@@ -37,29 +37,12 @@ impl<T> Sender<T> {
 
     fn wake_receivers(&self) {
         for queue in &self.shared.queues {
-            for _ in 0..queue.len() {
-                let waker = match queue.pop() {
-                    Some(waker) => waker,
-                    None => break,
-                };
-
-                waker.wake();
-            }
+            queue.set_watermark();
+            queue.wake_remote(8);
         }
-    }
 
-    fn wake_receivers_full(&self) {
-        let mut empty = false;
-        while !empty {
-            empty = true;
-
-            for queue in &self.shared.queues {
-                while let Some(waker) = queue.pop() {
-                    empty = false;
-
-                    waker.wake();
-                }
-            }
+        for queue in &self.shared.queues {
+            queue.wake_remote(u64::MAX);
         }
     }
 }
@@ -67,6 +50,6 @@ impl<T> Sender<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         self.shared.closed.store(true, Ordering::SeqCst);
-        self.wake_receivers_full();
+        self.wake_receivers();
     }
 }

@@ -56,3 +56,14 @@ impl<T> DerefMut for ArcWrap<T> {
         &mut self.0
     }
 }
+impl<T> From<Option<Arc<T>>> for ArcWrap<T> {
+    fn from(value: Option<Arc<T>>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<Arc<T>> for ArcWrap<T> {
+    fn from(value: Arc<T>) -> Self {
+        Some(value).into()
+    }
+}

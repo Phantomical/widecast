@@ -2,16 +2,16 @@
 //! of readers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::Waker;
 
 use arcbuf::{ArcCache, IndexError};
-use crossbeam_queue::SegQueue;
 use thread_local::ThreadLocal;
 
 use crate::arcbuf::ArcBuffer;
+use crate::queue::WakerQueue;
 
 mod arcbuf;
 mod error;
+mod queue;
 mod receiver;
 mod refcnt;
 mod sender;
@@ -19,8 +19,6 @@ mod sender;
 pub use crate::error::{RecvError, TryRecvError};
 pub use crate::receiver::{Guard, Receiver};
 pub use crate::sender::Sender;
-
-type WakerQueue = SegQueue<Waker>;
 
 struct Shared<T> {
     buffer: ArcBuffer<T>,

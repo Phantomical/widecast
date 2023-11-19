@@ -15,7 +15,7 @@ triomphe = "0.1.9"
 [workspace]
 members = [
     ".",
-    "bench"
+    "bench",
 ]
 
 [dev-dependencies]

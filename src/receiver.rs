@@ -117,11 +117,16 @@ impl<'a, T> Future for Recv<'a, T> {
     type Output = Result<Guard<T>, RecvError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let queue = self.rx.shared.thread_queue();
+        unsafe { queue.wake_local(0) };
+
         if let Poll::Ready(ready) = self.poll_once() {
             return Poll::Ready(ready);
         }
 
-        self.rx.shared.thread_queue().push(cx.waker().clone());
+        let queue = self.rx.shared.thread_queue();
+        unsafe { queue.push(cx.waker().clone()) };
+
         self.poll_once()
     }
 }
