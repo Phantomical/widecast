@@ -38,6 +38,10 @@ impl<T> Receiver<T> {
         }
     }
 
+    pub fn resubscribe(&self) -> Self {
+        Self::new(self.shared.clone())
+    }
+
     fn try_recv_raw(&mut self) -> Result<Guard<T>, GetError> {
         match self.shared.get(self.watermark) {
             Ok(guard) => {
@@ -51,10 +55,6 @@ impl<T> Receiver<T> {
             }
             Err(e) => Err(e),
         }
-    }
-
-    pub fn resubscribe(&self) -> Self {
-        Self::new(self.shared.clone())
     }
 }
 
