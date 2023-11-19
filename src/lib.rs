@@ -1,6 +1,7 @@
 //! A single-writer multiple-reader broadcast queue optimized for large numbers
 //! of readers.
 
+use std::fmt;
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
@@ -68,7 +69,7 @@ impl<T> Sender<T> {
         self.wake_receivers();
     }
 
-    pub fn bulk_send<I: Iterator<Item = T>>(&mut self, iter: I) {
+    pub fn send_bulk<I: Iterator<Item = T>>(&mut self, iter: I) {
         self.shared.buffer.push_bulk(iter, &mut self.cache);
         self.wake_receivers();
     }
@@ -98,6 +99,7 @@ impl<T> Sender<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         self.shared.closed.store(true, Ordering::SeqCst);
+        self.wake_receivers();
     }
 }
 
@@ -114,9 +116,14 @@ impl<T> Receiver<T> {
         }
     }
 
+    pub async fn recv(&mut self) -> Result<Guard<T>, RecvError> {
+        Recv::new(self).await
+    }
+
     pub fn try_recv(&mut self) -> Result<Guard<T>, TryRecvError> {
         match self.shared.buffer.get(self.watermark) {
             Ok(guard) => {
+                debug_assert!(guard.0.is_some());
                 self.watermark += 1;
                 Ok(Guard { guard })
             }
@@ -159,8 +166,20 @@ impl<T> Deref for Guard<T> {
     }
 }
 
+impl<T: fmt::Debug> fmt::Debug for Guard<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
 struct Recv<'a, T> {
     rx: &'a mut Receiver<T>,
+}
+
+impl<'a, T> Recv<'a, T> {
+    pub fn new(rx: &'a mut Receiver<T>) -> Self {
+        Self { rx }
+    }
 }
 
 impl<'a, T> Future for Recv<'a, T> {
@@ -187,3 +206,6 @@ impl<'a, T> Future for Recv<'a, T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

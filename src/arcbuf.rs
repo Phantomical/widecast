@@ -8,9 +8,6 @@ use crate::refcnt::ArcWrap;
 
 pub(crate) struct ArcBuffer<T> {
     values: Vec<ArcSwapAny<ArcWrap<T>>>,
-
-    // The align(64) ensures that these two values should be in their own cache
-    // line.
     head: AtomicU64,
     tail: AtomicU64,
 }
@@ -58,7 +55,7 @@ impl<T> ArcBuffer<T> {
     pub fn get(&self, index: u64) -> Result<Guard<ArcWrap<T>, DefaultStrategy>, IndexError> {
         let idx = self.index(index);
         let head = self.head.load(Ordering::Acquire);
-        if index > head {
+        if index >= head {
             return Err(IndexError::Invalid);
         }
 
@@ -179,7 +176,7 @@ impl<'b, T> BufferState<'b, T> {
 
         self.reserve(1);
 
-        let index = self.index(self.head + 1);
+        let index = self.index(self.head);
         let prev = self.swap_raw(index, value);
 
         self.advance(1);
@@ -195,7 +192,7 @@ impl<'b, T> BufferState<'b, T> {
         let saved_tail = self.tail;
 
         let mut prev = None;
-        let mut index = self.index(self.head + 1);
+        let mut index = self.index(self.head);
         self.reserve(estimate);
 
         for offset in 0..estimate {
