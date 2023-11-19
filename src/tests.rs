@@ -19,7 +19,6 @@ fn test_send_none() {
     assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
 }
 
-
 #[test]
 fn test_send_multiple() {
     let mut tx = Sender::new(128);

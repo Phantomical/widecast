@@ -56,7 +56,7 @@ impl<T> ArcBuffer<T> {
         let idx = self.index(index);
         let head = self.head.load(Ordering::Acquire);
         if index >= head {
-            return Err(IndexError::Invalid);
+            return Err(IndexError::Invalid(head));
         }
 
         // The acquire load for self.head above synchronizes with the write to
@@ -90,7 +90,9 @@ pub(crate) enum IndexError {
     Outdated(u64),
 
     /// The index was greater than the current head index.
-    Invalid,
+    ///
+    /// Contains the current head index.
+    Invalid(u64),
 }
 
 pub(crate) struct ArcCache<T>(Option<UniqueArc<MaybeUninit<T>>>);
