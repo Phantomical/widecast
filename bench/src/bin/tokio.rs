@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use hdrhistogram::Histogram;
 use thread_local::ThreadLocal;
-use tokio::sync::broadcast::{Sender, Receiver, error::RecvError};
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{Receiver, Sender};
 // use widecast::{Receiver, RecvError, Sender};
 
 pub struct State {

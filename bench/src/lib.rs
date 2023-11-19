@@ -39,7 +39,7 @@ pub struct Config {
     #[arg(long)]
     pub capacity: usize,
     #[arg(long)]
-    pub chunk: usize
+    pub chunk: usize,
 }
 
 impl Config {
