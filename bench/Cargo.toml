@@ -1,0 +1,17 @@
+[package]
+name = "widecast-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+default-run = "widecast-bench"
+
+[dependencies]
+widecast = { path = ".." }
+
+tokio = { version = "1.34.0", features = ["rt", "rt-multi-thread", "sync"] }
+clap = { version = "4.4.8", features = ["derive"] }
+humantime = "2.1.0"
+hdrhistogram = "7.5.3"
+thread_local = "1.1.7"
+console-subscriber = "0.2.0"
