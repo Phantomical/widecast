@@ -1,9 +1,8 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
-use crossbeam_queue::SegQueue;
 use triomphe::Arc;
 
-use crate::{ArcBuffer, ArcCache, Receiver, Shared};
+use crate::{ArcCache, Receiver, Shared};
 
 pub struct Sender<T> {
     shared: Arc<Shared<T>>,
@@ -12,14 +11,8 @@ pub struct Sender<T> {
 
 impl<T> Sender<T> {
     pub fn new(capacity: usize) -> Self {
-        let shared = Arc::new(Shared {
-            buffer: ArcBuffer::with_capacity(capacity),
-            closed: AtomicBool::new(false),
-            queues: std::array::from_fn(|_| SegQueue::new()),
-        });
-
         Self {
-            shared,
+            shared: Arc::new(Shared::with_capacity(capacity)),
             cache: ArcCache::new(),
         }
     }
