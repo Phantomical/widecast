@@ -9,6 +9,7 @@ use widecast::{Receiver, RecvError, Sender};
 
 pub struct State {
     pub latencies: Histogram<u32>,
+    pub send: Histogram<u32>,
 }
 
 impl fmt::Display for State {
@@ -20,6 +21,19 @@ impl fmt::Display for State {
         };
 
         writeln!(f, "queue delay:")?;
+        writeln!(f, "  p50:  {}", pct(50.0))?;
+        writeln!(f, "  p90:  {}", pct(90.0))?;
+        writeln!(f, "  p95:  {}", pct(95.0))?;
+        writeln!(f, "  p99:  {}", pct(99.0))?;
+        writeln!(f, "  p999: {}", pct(99.9))?;
+
+        let snapshot = &self.send;
+        let pct = |percentile| {
+            let nanos = snapshot.value_at_percentile(percentile);
+            humantime::format_duration(Duration::from_nanos(nanos.into()))
+        };
+
+        writeln!(f, "\nsend duration:")?;
         writeln!(f, "  p50:  {}", pct(50.0))?;
         writeln!(f, "  p90:  {}", pct(90.0))?;
         writeln!(f, "  p95:  {}", pct(95.0))?;
@@ -38,7 +52,7 @@ pub struct Config {
     pub messages: usize,
     #[arg(long)]
     pub capacity: usize,
-    #[arg(long)]
+    #[arg(long, default_value_t = 1)]
     pub chunk: usize,
 }
 
@@ -57,13 +71,14 @@ impl Config {
             handles.push(rt.spawn(consume_messages(tx.subscribe(), histograms.clone())));
         }
 
-        handles.push(rt.spawn(send_messages(tx, self)));
+        let send_messages = rt.spawn(send_messages(tx, self));
 
         rt.block_on(async {
             for handle in handles {
                 handle.await.expect("reader task panicked");
             }
         });
+        let histogram = rt.block_on(send_messages).unwrap();
         rt.shutdown_timeout(Duration::from_secs(1));
 
         let locals = Arc::into_inner(histograms).unwrap();
@@ -73,7 +88,10 @@ impl Config {
             total += histogram.into_inner();
         }
 
-        State { latencies: total }
+        State {
+            latencies: total,
+            send: histogram,
+        }
     }
 }
 
@@ -92,8 +110,12 @@ async fn consume_messages(mut rx: Receiver<Instant>, latencies: Arc<ThreadLocal<
     }
 }
 
-async fn send_messages(mut tx: Sender<Instant>, config: Config) {
+async fn send_messages(mut tx: Sender<Instant>, config: Config) -> Histogram<u32> {
     let mut messages = Vec::with_capacity(config.chunk);
+    let mut histogram = make_histogram();
+
+    let period = Duration::from_millis(1);
+    let mut next = tokio::time::Instant::now() + period;
 
     for _ in 0..(config.messages / config.chunk) {
         let now = Instant::now();
@@ -101,8 +123,14 @@ async fn send_messages(mut tx: Sender<Instant>, config: Config) {
 
         tx.send_bulk(messages.drain(..));
 
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        let elapsed = now.elapsed();
+        let _ = histogram.record(elapsed.as_nanos() as _);
+
+        tokio::time::sleep_until(next).await;
+        next += period;
     }
+
+    histogram
 }
 
 fn make_histogram() -> Histogram<u32> {
