@@ -1,0 +1,9 @@
+[package]
+name = "masswake"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arc-swap = "1.6.0"
+crossbeam-utils = "0.8.16"
+thread_local = "1.1.7"

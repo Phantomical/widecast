@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+masswake = { path = "crates/masswake" }
+
 arc-swap = "1.6.0"
-crossbeam-queue = "0.3.8"
 crossbeam-utils = "0.8.16"
-fxhash = "0.2.1"
 scopeguard = "1.2.0"
 thread_local = "1.1.7"
 triomphe = "0.1.9"
@@ -16,6 +16,7 @@ triomphe = "0.1.9"
 members = [
     ".",
     "bench",
+    "crates/*"
 ]
 
 [dev-dependencies]

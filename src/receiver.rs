@@ -1,9 +1,8 @@
-use std::future::Future;
 use std::ops::Deref;
-use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{fmt, mem};
 
+use masswake::Interest;
 use triomphe::Arc;
 
 use crate::arcbuf::IndexError;
@@ -12,6 +11,7 @@ use crate::{GetError, RecvError, Shared, TryRecvError};
 
 pub struct Receiver<T> {
     shared: Arc<Shared<T>>,
+    interest: Interest,
     watermark: u64,
 }
 
@@ -19,12 +19,13 @@ impl<T> Receiver<T> {
     pub(crate) fn new(shared: Arc<Shared<T>>) -> Self {
         Self {
             watermark: shared.buffer.head(),
+            interest: Interest::new(&shared.notify),
             shared,
         }
     }
 
     pub async fn recv(&mut self) -> Result<Guard<T>, RecvError> {
-        Recv::new(self).await
+        std::future::poll_fn(|cx| self.poll_recv(cx)).await
     }
 
     pub fn try_recv(&mut self) -> Result<Guard<T>, TryRecvError> {
@@ -41,7 +42,9 @@ impl<T> Receiver<T> {
     pub fn resubscribe(&self) -> Self {
         Self::new(self.shared.clone())
     }
+}
 
+impl<T> Receiver<T> {
     fn try_recv_raw(&mut self) -> Result<Guard<T>, GetError> {
         match self.shared.get(self.watermark) {
             Ok(guard) => {
@@ -56,12 +59,32 @@ impl<T> Receiver<T> {
             Err(e) => Err(e),
         }
     }
+
+    fn poll_once(&mut self) -> Poll<Result<Guard<T>, RecvError>> {
+        Poll::Ready(match self.try_recv_raw() {
+            Ok(guard) => Ok(guard),
+            Err(GetError::Closed) => Err(RecvError::Closed),
+            Err(GetError::Index(IndexError::Outdated(skipped))) => Err(RecvError::Lagged(skipped)),
+            Err(GetError::Index(IndexError::Invalid(_))) => return Poll::Pending,
+        })
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Result<Guard<T>, RecvError>> {
+        if let Poll::Ready(ready) = self.poll_once() {
+            self.interest.assist();
+            return Poll::Ready(ready);
+        }
+
+        self.interest.register(cx);
+        self.poll_once()
+    }
 }
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
         Self {
             shared: self.shared.clone(),
+            interest: Interest::new(&self.shared.notify),
             watermark: self.watermark,
         }
     }
@@ -91,42 +114,5 @@ impl<T> Deref for Guard<T> {
 impl<T: fmt::Debug> fmt::Debug for Guard<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (**self).fmt(f)
-    }
-}
-
-struct Recv<'a, T> {
-    rx: &'a mut Receiver<T>,
-}
-
-impl<'a, T> Recv<'a, T> {
-    pub fn new(rx: &'a mut Receiver<T>) -> Self {
-        Self { rx }
-    }
-
-    fn poll_once(&mut self) -> Poll<Result<Guard<T>, RecvError>> {
-        Poll::Ready(match self.rx.try_recv_raw() {
-            Ok(guard) => Ok(guard),
-            Err(GetError::Closed) => Err(RecvError::Closed),
-            Err(GetError::Index(IndexError::Outdated(skipped))) => Err(RecvError::Lagged(skipped)),
-            Err(GetError::Index(IndexError::Invalid(_))) => return Poll::Pending,
-        })
-    }
-}
-
-impl<'a, T> Future for Recv<'a, T> {
-    type Output = Result<Guard<T>, RecvError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let queue = self.rx.shared.thread_queue();
-        unsafe { queue.wake_local(0) };
-
-        if let Poll::Ready(ready) = self.poll_once() {
-            return Poll::Ready(ready);
-        }
-
-        let queue = self.rx.shared.thread_queue();
-        unsafe { queue.push(cx.waker().clone()) };
-
-        self.poll_once()
     }
 }

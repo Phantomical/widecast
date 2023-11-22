@@ -50,10 +50,13 @@ pub struct Config {
     pub readers: usize,
     #[arg(long)]
     pub messages: usize,
-    #[arg(long)]
+    #[arg(long, default_value_t = 128)]
     pub capacity: usize,
     #[arg(long, default_value_t = 1)]
     pub chunk: usize,
+
+    #[arg(long, default_value_t = 1)]
+    pub delay: u64,
 }
 
 impl Config {
@@ -114,7 +117,7 @@ async fn send_messages(mut tx: Sender<Instant>, config: Config) -> Histogram<u32
     let mut messages = Vec::with_capacity(config.chunk);
     let mut histogram = make_histogram();
 
-    let period = Duration::from_millis(1);
+    let period = Duration::from_millis(config.delay);
     let mut next = tokio::time::Instant::now() + period;
 
     for _ in 0..(config.messages / config.chunk) {
