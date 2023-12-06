@@ -10,7 +10,7 @@ arc-swap = "1.6.0"
 crossbeam-utils = "0.8.16"
 scopeguard = "1.2.0"
 thread_local = "1.1.7"
-triomphe = "0.1.9"
+triomphe = { version = "0.1.9", default-features = false, features = ["std"] }
 
 [workspace]
 members = [
