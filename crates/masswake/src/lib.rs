@@ -99,7 +99,7 @@ impl Interest {
         // when new tasks get pushed in front of them.
         //
         // SAFETY: This is only ever called on the queue for the local thread.
-        if let Some(iter) = unsafe { local.queue.consume_local(u64::MAX, watermark) } {
+        if let Some(iter) = unsafe { local.queue.consume_local(0, watermark) } {
             for data in iter {
                 data.wake();
             }
