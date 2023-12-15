@@ -57,6 +57,8 @@ pub struct Config {
 
     #[arg(long, default_value_t = 1)]
     pub delay: u64,
+    #[arg(long)]
+    pub threads: Option<usize>,
 }
 
 impl Config {
@@ -64,7 +66,12 @@ impl Config {
         let tx = Sender::<Instant>::new(self.capacity);
         let histograms = Arc::new(ThreadLocal::new());
 
-        let rt = tokio::runtime::Builder::new_multi_thread()
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        if let Some(threads) = self.threads {
+            builder.worker_threads(threads);
+        }
+
+        let rt = builder
             .enable_all()
             .build()
             .expect("failed to create tokio runtime");
