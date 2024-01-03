@@ -37,12 +37,14 @@ impl<T> LocalQueue<T> {
 
     /// Push a new value onto the queue.
     ///
+    /// Returns the queue index at which the item was inserted.
+    ///
     /// # Safety
     /// This is a local method. It may not be called concurrently with any other
     /// `*_local` methods.
-    pub unsafe fn push_local(&self, value: T) {
+    pub unsafe fn push_local(&self, value: T) -> u64 {
         let local = unsafe { &mut *self.local.get() };
-        local.push(&self.shared, value);
+        local.push(&self.shared, value)
     }
 
     /// Consume values from the queue.
@@ -206,7 +208,7 @@ struct Local<T> {
 }
 
 impl<T> Local<T> {
-    pub fn push(&mut self, shared: &Shared<T>, value: T) {
+    pub fn push(&mut self, shared: &Shared<T>, value: T) -> u64 {
         let len = self.chunk.data.len();
 
         let head = shared.head.load(Ordering::Relaxed);
@@ -227,6 +229,7 @@ impl<T> Local<T> {
         unsafe { (*chunk.data[index].get()).write(value) };
 
         shared.head.store(head + 1, Ordering::Release);
+        head
     }
 
     pub fn consume_local<'a>(

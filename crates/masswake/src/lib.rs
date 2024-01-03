@@ -1,8 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
+use std::thread::ThreadId;
 
 use crossbeam_utils::CachePadded;
+use noop_waker::noop_waker;
 use thread_local::ThreadLocal;
 
 use crate::queue::LocalQueue;
@@ -80,12 +82,24 @@ impl MassNotify {
 
 pub struct Interest {
     shared: Arc<Shared>,
+
+    /// The watermark when `waker` was last pushed into the queue.
+    watermark: u64,
+
+    /// The thread that we were last registered on.
+    thread_id: Option<ThreadId>,
+
+    /// The last waker to have been pushed into the queue.
+    waker: Waker,
 }
 
 impl Interest {
     pub fn new(notify: &MassNotify) -> Self {
         Self {
             shared: notify.shared.clone(),
+            watermark: u64::MAX,
+            thread_id: None,
+            waker: noop_waker(),
         }
     }
 
@@ -110,9 +124,48 @@ impl Interest {
     /// [`MassNotify::notify_all`] is called.
     pub fn register(&mut self, cx: &mut Context<'_>) {
         let local = self.shared.thread_local();
+        let current = local.watermark.load(Ordering::Acquire);
+
+        if !self.needs_to_register(current, cx) {
+            return;
+        }
 
         // SAFETY: This is only ever called on the queue for the local thread.
-        unsafe { local.queue.push_local(cx.waker().clone()) };
+        let index = unsafe { local.queue.push_local(cx.waker().clone()) };
+
+        self.watermark = index;
+        self.waker = cx.waker().clone();
+        self.thread_id = Some(std::thread::current().id());
+    }
+
+    /// In certain cases we can avoid adding a new waker to the queue.
+    ///
+    /// This is needed to avoid unbounded memory usage in certain common use
+    /// cases like `tokio::select!`.
+    fn needs_to_register(&self, watermark: u64, cx: &mut Context<'_>) -> bool {
+        // Special case: u64::MAX means that we haven't ever registered a waker.
+        if self.watermark == u64::MAX {
+            return true;
+        }
+
+        // If we have migrated between threads since the last register then we have no
+        // way of telling if we need to register again so we need to re-register.
+        match self.thread_id {
+            None => return true,
+            Some(id) if id != std::thread::current().id() => return true,
+            _ => (),
+        }
+
+        // We last registered before the last wake so we need to re-register.
+        if self.watermark < watermark {
+            return true;
+        }
+
+        // If the waker has changed then it is also necessary to re-register.
+        //
+        // Rust's waker design doesn't guarantee that we'll be woken if we don't wake
+        // the waker from the latest context.
+        !cx.waker().will_wake(&self.waker)
     }
 }
 
