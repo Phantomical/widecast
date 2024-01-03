@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
-use std::thread::ThreadId;
 
 use crossbeam_utils::CachePadded;
 use noop_waker::noop_waker;
@@ -86,8 +85,11 @@ pub struct Interest {
     /// The watermark when `waker` was last pushed into the queue.
     watermark: u64,
 
-    /// The thread that we were last registered on.
-    thread_id: Option<ThreadId>,
+    /// A reference to the watermark of the last queue we inserted a waker into.
+    ///
+    /// This is not `'static` but instead refers to `shared`. Do NOT touch it
+    /// during drop.
+    queue: Option<&'static AtomicU64>,
 
     /// The last waker to have been pushed into the queue.
     waker: Waker,
@@ -98,7 +100,7 @@ impl Interest {
         Self {
             shared: notify.shared.clone(),
             watermark: u64::MAX,
-            thread_id: None,
+            queue: None,
             waker: noop_waker(),
         }
     }
@@ -123,38 +125,39 @@ impl Interest {
     /// Register the current task to be awoken the the next time the
     /// [`MassNotify::notify_all`] is called.
     pub fn register(&mut self, cx: &mut Context<'_>) {
-        let local = self.shared.thread_local();
-        let current = local.watermark.load(Ordering::Acquire);
-
-        if !self.needs_to_register(current, cx) {
+        if !self.needs_to_register(cx) {
             return;
         }
+
+        let local = self.shared.thread_local();
 
         // SAFETY: This is only ever called on the queue for the local thread.
         let index = unsafe { local.queue.push_local(cx.waker().clone()) };
 
         self.watermark = index;
         self.waker = cx.waker().clone();
-        self.thread_id = Some(std::thread::current().id());
+
+        // SAFETY: `local` will live as long as the `shared` arc does.
+        self.queue = unsafe { Some(&*(&local.watermark as *const _)) };
     }
 
     /// In certain cases we can avoid adding a new waker to the queue.
     ///
     /// This is needed to avoid unbounded memory usage in certain common use
     /// cases like `tokio::select!`.
-    fn needs_to_register(&self, watermark: u64, cx: &mut Context<'_>) -> bool {
+    fn needs_to_register(&self, cx: &mut Context<'_>) -> bool {
         // Special case: u64::MAX means that we haven't ever registered a waker.
         if self.watermark == u64::MAX {
             return true;
         }
 
-        // If we have migrated between threads since the last register then we have no
-        // way of telling if we need to register again so we need to re-register.
-        match self.thread_id {
+        // We may have migrated between threads since the last call to register. To work
+        // around that we keep a reference to the watermark of the last queue that we
+        // pushed a value into.
+        let watermark = match self.queue {
+            Some(queue) => queue.load(Ordering::Acquire),
             None => return true,
-            Some(id) if id != std::thread::current().id() => return true,
-            _ => (),
-        }
+        };
 
         // We last registered before the last wake so we need to re-register.
         if self.watermark < watermark {
