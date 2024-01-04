@@ -1,3 +1,63 @@
+//! A waker designed for efficiently waking a large number of tasks.
+//!
+//! This is meant to be used as a building block when writing your own futures.
+//! All it does is efficiently keep track of wakers for all registered tasks
+//! and notify them when [`MassNotify::notify_all`] is called.
+//!
+//! If you are using this to build bigger data structures then you will need an
+//! external way to track whether the future is ready once it wakes up.
+//!
+//! # Example
+//! ```
+//! # #[tokio::main]
+//! # async fn main() {
+//! use masswake::{MassNotify, Interest};
+//! use std::task::Poll;
+//!
+//! let mut waker = MassNotify::new();
+//! let mut interest = Interest::new(&waker);
+//!
+//! let handle = tokio::spawn(async move {
+//!     let mut done = false;
+//!     std::future::poll_fn(|cx| {
+//!         if !done {
+//!             interest.register(cx);
+//!             done = true;
+//!             return Poll::Pending;
+//!         }
+//!
+//!         Poll::Ready(())
+//!     }).await;
+//! });
+//!
+//! // Let the future run first so that it becomes registered.
+//! tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+//!
+//! // Now notify all the tasks.
+//! waker.notify_all();
+//! let _ = handle.await;
+//! # }
+//! ```
+//!
+//! # Limitations
+//! - [`MassNotify`] maintains a SPSC queue per thread so having [`Interest`]s
+//!   scattered across a large number of threads will result in a slow down.
+//!   Note that queues can be reused once their owning thread exits so the issue
+//!   really only shows up when a large number of threads are used concurrently.
+//!
+//! # How it Works
+//! The main part of this crate is [`MassNotify`]. It maintains a set of SPSC
+//! queues, one per thread. When an [`Interest`] registers itself, it adds a
+//! waker to the local queue. On the other side, when [`MassNotify::notify_all`]
+//! is called it removes all the wakers from each queue in bulk.
+//!
+//! The advantages of this approach are:
+//! - All inserts happen on a local queue and so are pretty much uncontended.
+//!   They still have to be atomic since `notify_all` needs to look at them but
+//!   that happens infrequently in comparison.
+//! - `notify_all` can spend most of its time iterating over an array of wakers
+//!   instead of performing atomic queue operations.
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
@@ -12,13 +72,7 @@ mod queue;
 
 type WakerQueue = LocalQueue<Waker>;
 
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct Config {
-    pub assist: bool,
-}
-
-///
+/// 
 #[derive(Default)]
 pub struct MassNotify {
     shared: Arc<Shared>,

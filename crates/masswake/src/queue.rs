@@ -163,14 +163,6 @@ impl<T> Shared<T> {
             self.remote.store(start, Ordering::Release);
         }
 
-        // println!(
-        //     "acquired {: <6} range {:03}..{:03} (queue {:?})",
-        //     if remote { "remote" } else { "local" },
-        //     start,
-        //     target,
-        //     self as *const _
-        // );
-
         Some(start..target)
     }
 
