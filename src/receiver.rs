@@ -71,7 +71,7 @@ impl<T> Receiver<T> {
 
     fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Result<Guard<T>, RecvError>> {
         if let Poll::Ready(ready) = self.poll_once() {
-            self.interest.assist();
+            // self.interest.assist();
             return Poll::Ready(ready);
         }
 

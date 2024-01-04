@@ -13,9 +13,10 @@
 //! # async fn main() {
 //! use masswake::{MassNotify, Interest};
 //! use std::task::Poll;
+//! use std::time::Duration;
 //!
 //! let mut waker = MassNotify::new();
-//! let mut interest = Interest::new(&waker);
+//! let mut interest = waker.register();
 //!
 //! let handle = tokio::spawn(async move {
 //!     let mut done = false;
@@ -31,7 +32,7 @@
 //! });
 //!
 //! // Let the future run first so that it becomes registered.
-//! tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+//! tokio::time::sleep(Duration::from_millis(50)).await;
 //!
 //! // Now notify all the tasks.
 //! waker.notify_all();
@@ -60,6 +61,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+#[allow(unused_imports)] // used in docs
+use std::task::Poll;
 use std::task::{Context, Waker};
 
 use crossbeam_utils::CachePadded;
@@ -72,7 +75,19 @@ mod queue;
 
 type WakerQueue = LocalQueue<Waker>;
 
-/// 
+/// Notify a set of tasks to wake up.
+///
+/// [`MassNotify`] is analogous to tokio's [`Notify`] except that it is
+/// restricted to only notify all available tasks. It is designed to be much
+/// more efficient than [`Notify`] when working with a large number of tasks to
+/// be woken (100 to 100k+).
+///
+/// To use this in a future, call [`register`] to create an [`Interest`] and
+/// then call [`Interest::register`] from your future's `poll` method when you
+/// would return [`Poll::Pending`].
+///
+/// [`Notify`]: https://docs.rs/tokio/1/tokio/sync/struct.Notify.html
+/// [`register`]: MassNotify::register
 #[derive(Default)]
 pub struct MassNotify {
     shared: Arc<Shared>,
@@ -80,10 +95,16 @@ pub struct MassNotify {
 }
 
 impl MassNotify {
+    /// Create a new `MassNotify` with no registered [`Interest`]s.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Wake all tasks that are currently awaiting a notification.
+    ///
+    /// Note that this takes a lock for the duration of the call. If you find
+    /// that you are spending a lot of time within `notify_all` you may want to
+    /// consider batching your events in order to send fewer notifications.
     pub fn notify_all(&self) {
         let _guard = self.mutex.lock().map_err(|e| e.into_inner());
         let mut queues = Vec::with_capacity(16);
@@ -131,8 +152,23 @@ impl MassNotify {
             }
         }
     }
+
+    /// Create a new [`Interest`] that can be used to have a task get
+    /// notifications when [`notify_all`](MassNotify::notify_all) is called.
+    pub fn register(&self) -> Interest {
+        Interest::new(self)
+    }
 }
 
+/// Listen for notifications from a [`MassNotify`].
+///
+/// This is analogous to tokio's [`Notified`] but is used differently because it
+/// can be reused multiple times for many notifications.
+///
+/// To use, call [`register`] when your future would return [`Poll::Pending`].
+///
+/// [`Notified`]: https://docs.rs/tokio/1/tokio/sync/futures/struct.Notified.html
+/// [`register`]: Interest::register
 pub struct Interest {
     shared: Arc<Shared>,
 
@@ -160,7 +196,27 @@ impl Interest {
     }
 
     /// Assist the notifier in waking up further tasks.
-    pub fn assist(&mut self) {
+    ///
+    /// By specifying `limit` you can limit the amount of work that the current
+    /// assisting task will do. If you want to always wake all tasks that are
+    /// scheduled to be woken up then use `u64::MAX`.
+    ///
+    /// Having woken tasks assist can reduce the amount of time spent in
+    /// [`MassNotify::notify_all`] at the expense of spending more time when
+    /// waking up tasks.
+    ///
+    /// ## A note on performance
+    /// While at first glance it would seem this should usually give a
+    /// performance and latency benefit, that is not always the case. Some
+    /// executors (i.e. tokio) have different behaviours when a task is woken on
+    /// the local thread vs a remote one. Be sure to measure the impact on
+    /// performance and latency before using this.
+    ///
+    /// For tokio specifically, locals task wakeups are queued in LIFO order
+    /// whereas remote wakeups are added in FIFO order. Under high load this may
+    /// result in starvation as new tasks are queued before the tokio runtime
+    /// can work through the whole queue.
+    pub fn assist(&mut self, limit: u64) {
         let local = self.shared.thread_local();
         let watermark = local.watermark.load(Ordering::Acquire);
 
@@ -169,7 +225,7 @@ impl Interest {
         // when new tasks get pushed in front of them.
         //
         // SAFETY: This is only ever called on the queue for the local thread.
-        if let Some(iter) = unsafe { local.queue.consume_local(0, watermark) } {
+        if let Some(iter) = unsafe { local.queue.consume_local(limit, watermark) } {
             for data in iter {
                 data.wake();
             }
