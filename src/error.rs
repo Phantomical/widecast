@@ -1,6 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::{Receiver, Sender};
+
+used_in_docs!(Receiver, Sender);
+
+/// An error returned from the [`recv`] function on a [`Receiver`].
+///
+/// [`recv`]: Receiver::recv
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecvError {
     /// The single sender has closed. No further messages will be sent.
@@ -22,14 +29,15 @@ impl fmt::Display for RecvError {
 
 impl Error for RecvError {}
 
+/// An error returned from the [`try_recv`] function on a [`Receiver`].
+///
+/// [`try_recv`]: Receiver::try_recv
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TryRecvError {
     /// The channel is currently empty.
     ///
     /// There is still an active [`Sender`] so data may become available at a
     /// later time.
-    ///
-    /// [`Sender`]: crate::Sender
     Empty,
 
     /// The single sender has closed. No further messages will be sent.
