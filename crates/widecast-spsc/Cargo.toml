@@ -1,0 +1,17 @@
+[package]
+name = "widecast-spsc"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+
+[dependencies]
+arc-swap = { version = "1.6" }
+cfg-if = "1.0.0"
+crossbeam-utils = "0.8.19"
+
+tracing = "0.1"
+
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7", features = ["checkpoint"] }
+

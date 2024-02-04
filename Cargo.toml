@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "bench", "crates/*"]
+
 [package]
 name = "widecast"
 version = "0.1.0"
@@ -12,16 +15,12 @@ scopeguard = "1.2.0"
 thread_local = "1.1.7"
 triomphe = { version = "0.1.9", default-features = false, features = ["std"] }
 
-[workspace]
-members = [
-    ".",
-    "bench",
-    "crates/*"
-]
-
 [dev-dependencies]
 assert_matches = "1.5.0"
 tokio = { version = "1.34.0", features = ["macros", "test-util", "rt"] }
 
 [profile.release]
 debug = true
+
+[patch.crates-io]
+loom = { path = "../loom" }
