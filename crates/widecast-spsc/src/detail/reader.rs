@@ -8,6 +8,8 @@ use super::chunk::Chunk;
 use super::Shared;
 use crate::shim::{Arc, Guard, UnsafeCell};
 
+type ChunkGuard<T> = Guard<Arc<Chunk<T>>>;
+
 pub(crate) struct Reader<T> {
     tail: u64,
     _marker: PhantomData<T>,
@@ -29,8 +31,11 @@ impl<T> Reader<T> {
     /// # Parameters
     /// - `shared` - The shared portion of the queue.
     /// - `watermark` - The maximum index that can be acquired
-    fn acquire_range(&mut self, shared: &Shared<T>, watermark: u64) -> Range<u64> {
+    fn acquire_range(&mut self, shared: &Shared<T>, watermark: u64) -> (Range<u64>, ChunkGuard<T>) {
         let head = shared.head.load(Ordering::Acquire);
+
+        // Need to load chunk after we load head but before we update tail.
+        let chunk = shared.chunk.load();
 
         let watermark = head.min(watermark);
         let target = self.tail.max(watermark);
@@ -40,18 +45,14 @@ impl<T> Reader<T> {
         shared.update_tail(target);
         // }
 
-        start..target
+        (start..target, chunk)
     }
 
     pub fn pop(&mut self, shared: &Shared<T>) -> Option<T> {
-        let range = self.acquire_range(shared, self.tail + 1);
+        let (range, chunk) = self.acquire_range(shared, self.tail + 1);
         if range.start == range.end {
             return None;
         }
-
-        // We need to load the chunk _after_ acquiring the range or else we could
-        // potentially have a range that is larger than the current chunk.
-        let chunk = shared.chunk.load();
 
         Drain::new(chunk, range, shared, self).next()
     }
@@ -59,11 +60,7 @@ impl<T> Reader<T> {
     /// Acquire a draining iterator for all elements currently in the queue, up
     /// to `watermark`.
     pub fn consume<'a>(&'a mut self, shared: &'a Shared<T>, watermark: u64) -> Drain<'a, T> {
-        let range = self.acquire_range(shared, watermark);
-
-        // We need to load the chunk _after_ acquiring the range or else we could
-        // potentially have a range that is larger than the current chunk.
-        let chunk = shared.chunk.load();
+        let (range, chunk) = self.acquire_range(shared, watermark);
 
         Drain::new(chunk, range, shared, self)
     }
@@ -90,7 +87,9 @@ impl<'a, T> Drain<'a, T> {
         shared: &'a Shared<T>,
         remote: &'a mut Reader<T>,
     ) -> Self {
-        let (range1, range2) = chunk.translate_range(range);
+        let (range1, range2) = chunk.translate_range(range.clone());
+
+        tracing::debug!(?range, ?range1, ?range2, "drain");
 
         let slice1 = chunk.get(range1);
         let slice2 = range2.map(|r| chunk.get(r)).unwrap_or_default();

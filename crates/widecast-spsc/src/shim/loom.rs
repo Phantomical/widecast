@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use std::panic::Location;
 
 use loom::sync::{Arc, RwLock};
 
@@ -13,15 +14,20 @@ impl<T> ArcSwap<T> {
         }
     }
 
+    #[track_caller]
     pub fn load(&self) -> Guard<Arc<T>> {
         Guard(self.load_full())
     }
 
+    #[track_caller]
     pub fn load_full(&self) -> Arc<T> {
+        tracing::trace!(location = %Location::caller(), "ArcSwap::load");
         self.cell.read().unwrap().clone()
     }
 
+    #[track_caller]
     pub fn store(&self, value: Arc<T>) {
+        tracing::trace!(location = %Location::caller(), "ArcSwap::store");
         *self.cell.write().unwrap() = value;
     }
 }

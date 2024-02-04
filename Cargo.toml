@@ -21,6 +21,7 @@ tokio = { version = "1.34.0", features = ["macros", "test-util", "rt"] }
 
 [profile.release]
 debug = true
+lto = "thin"
 
 [patch.crates-io]
 loom = { path = "../loom" }

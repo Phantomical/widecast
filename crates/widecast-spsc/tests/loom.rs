@@ -28,6 +28,29 @@ fn concurrent_send_and_drain() {
 }
 
 #[test]
+fn concurrent_send_and_drain_multiple() {
+    loom::model(|| {
+        let v1 = Arc::new(RawQueue::<usize>::with_capacity(1));
+        let v2 = v1.clone();
+
+        thread::spawn(move || {
+            for i in 0..3 {
+                unsafe { v1.push(i) };
+            }
+        });
+
+        let mut recvd = Vec::new();
+        recvd.extend(unsafe { v2.drain() });
+        recvd.extend(unsafe { v2.drain() });
+
+        // No extraneous values received.
+        assert!(recvd.len() <= 32);
+        // Values received in-order.
+        assert!(recvd.iter().enumerate().all(|(idx, &val)| idx == val), "{recvd:?}");
+    })
+}
+
+#[test]
 fn concurrent_send_and_drain_drop() {
     loom::model(|| {
         let v1 = Arc::new(RawQueue::<usize>::with_capacity(8));
