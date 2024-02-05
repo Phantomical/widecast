@@ -182,10 +182,8 @@ impl<T> Receiver<T> {
     pub fn drain_to(&mut self, watermark: u64) -> Result<Drain<T>, DrainError> {
         let drain = self.reader.consume(&self.channel.shared, watermark);
 
-        if drain.len() == 0 {
-            if self.channel.is_closed() && self.channel.shared.is_empty() {
-                return Err(DrainError);
-            }
+        if drain.len() == 0 && self.channel.is_closed() && self.channel.shared.is_empty() {
+            return Err(DrainError);
         }
 
         Ok(drain)

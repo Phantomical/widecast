@@ -1,4 +1,4 @@
-use std::iter::Chain;
+use std::iter::{Chain, FusedIterator};
 use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit};
 use std::ops::Range;
@@ -154,6 +154,14 @@ impl<T> Iterator for Drain<'_, T> {
             DefaultIterator(self).nth(n)
         }
     }
+
+    fn last(mut self) -> Option<Self::Item> {
+        if !mem::needs_drop::<T>() {
+            mem::take(&mut self.iter).last().map(Self::read_slot)
+        } else {
+            DefaultIterator(self).last()
+        }
+    }
 }
 
 impl<T> DoubleEndedIterator for Drain<'_, T> {
@@ -174,6 +182,8 @@ impl<T> DoubleEndedIterator for Drain<'_, T> {
 // the two slices we're iterating over are disjoint so we can implement it.
 impl<T> ExactSizeIterator for Drain<'_, T> {}
 
+impl<T> FusedIterator for Drain<'_, T> {}
+
 impl<T> Drop for Drain<'_, T> {
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
@@ -184,7 +194,7 @@ impl<T> Drop for Drain<'_, T> {
             // If we were to be running a drop_in_place concurrently with that copy then
             // that would be a data race and therefore UB. To avoid that we just read all
             // the elements and drop them here.
-            while let Some(_) = self.next() {}
+            for _ in self.by_ref() {}
         }
 
         // Update the tail pointer so that the writer can now use the space.
@@ -199,9 +209,9 @@ unsafe impl<T: Send> Sync for Drain<'_, T> {}
 
 /// An iterator adapter that forwards everything except the required methods to
 /// their default impls on `Iterator`.
-struct DefaultIterator<'a, I>(&'a mut I);
+struct DefaultIterator<I>(I);
 
-impl<'a, I> Iterator for DefaultIterator<'a, I>
+impl<I> Iterator for DefaultIterator<I>
 where
     I: Iterator,
 {
@@ -216,7 +226,7 @@ where
     }
 }
 
-impl<'a, I> DoubleEndedIterator for DefaultIterator<'a, I>
+impl<I> DoubleEndedIterator for DefaultIterator<I>
 where
     I: DoubleEndedIterator,
 {

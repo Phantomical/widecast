@@ -10,6 +10,12 @@ pub struct RawQueue<T> {
     writer: UnsafeCell<Writer<T>>,
 }
 
+impl<T> Default for RawQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> RawQueue<T> {
     /// Create a new queue with a default capacity.
     pub fn new() -> Self {
