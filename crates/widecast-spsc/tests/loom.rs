@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use loom::thread;
-use widecast_spsc::RawQueue;
+use widecast_spsc::RawChannel;
 
 #[test]
 fn concurrent_send_and_drain() {
     loom::model(|| {
-        let v1 = Arc::new(RawQueue::<usize>::with_capacity(8));
+        let v1 = Arc::new(RawChannel::<usize>::with_capacity(8));
         let v2 = v1.clone();
 
         thread::spawn(move || {
@@ -30,7 +30,7 @@ fn concurrent_send_and_drain() {
 #[test]
 fn concurrent_send_and_drain_multiple() {
     loom::model(|| {
-        let v1 = Arc::new(RawQueue::<usize>::with_capacity(1));
+        let v1 = Arc::new(RawChannel::<usize>::with_capacity(1));
         let v2 = v1.clone();
 
         thread::spawn(move || {
@@ -56,7 +56,7 @@ fn concurrent_send_and_drain_multiple() {
 #[test]
 fn concurrent_send_and_drain_drop() {
     loom::model(|| {
-        let v1 = Arc::new(RawQueue::<usize>::with_capacity(8));
+        let v1 = Arc::new(RawChannel::<usize>::with_capacity(8));
         let v2 = v1.clone();
 
         thread::spawn(move || {
@@ -74,7 +74,7 @@ fn concurrent_send_and_recv() {
     const COUNT: usize = 3;
 
     loom::model(|| {
-        let v1 = Arc::new(RawQueue::<usize>::with_capacity(2));
+        let v1 = Arc::new(RawChannel::<usize>::with_capacity(2));
         let v2 = v1.clone();
 
         thread::spawn(move || {

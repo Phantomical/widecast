@@ -105,20 +105,11 @@ impl<T> Chunk<T> {
         let (src1, src2) = src.translate_range(range.clone());
         let (dst1, dst2) = dst.translate_range(range.clone());
 
-        tracing::debug!(
-            ?range,
-            src = src.capacity(),
-            dst = dst.capacity(),
-            "copy_from"
-        );
-        tracing::debug!(?src1, ?src2, ?dst1, ?dst2, "ranges");
-
         match (src2, dst2) {
             // Easy case: both segments are contiguous
             (None, None) => move_uninit_slice(dst.get_mut(dst1), src.get(src1)),
             // dst contiguous, src is not
             (Some(src2), None) => {
-                tracing::debug!(?dst1, ?src1, "split");
                 let (d1, d2) = dst.get_mut(dst1).split_at_mut(src1.len());
 
                 move_uninit_slice(d1, src.get(src1));

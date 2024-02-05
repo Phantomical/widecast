@@ -4,19 +4,19 @@ use crate::detail::{Reader, Shared, Writer};
 use crate::shim::UnsafeCell;
 use crate::Drain;
 
-pub struct RawQueue<T> {
+pub struct RawChannel<T> {
     shared: Shared<T>,
     reader: UnsafeCell<Reader<T>>,
     writer: UnsafeCell<Writer<T>>,
 }
 
-impl<T> Default for RawQueue<T> {
+impl<T> Default for RawChannel<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> RawQueue<T> {
+impl<T> RawChannel<T> {
     /// Create a new queue with a default capacity.
     pub fn new() -> Self {
         Self::with_capacity(16)

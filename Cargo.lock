@@ -1332,7 +1332,6 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "cfg-if",
- "crossbeam-utils",
  "loom",
  "tracing",
 ]

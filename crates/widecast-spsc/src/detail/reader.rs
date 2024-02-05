@@ -99,8 +99,6 @@ impl<'a, T> Drain<'a, T> {
     ) -> Self {
         let (range1, range2) = chunk.translate_range(range.clone());
 
-        tracing::debug!(?range, ?range1, ?range2, "drain");
-
         let slice1 = chunk.get(range1);
         let slice2 = range2.map(|r| chunk.get(r)).unwrap_or_default();
         let iter: Chain<ChunkIter<T>, ChunkIter<T>> = slice1.iter().chain(slice2.iter());

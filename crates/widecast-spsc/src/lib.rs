@@ -12,4 +12,4 @@ mod shim;
 
 pub use crate::channel::*;
 pub use crate::detail::Drain;
-pub use crate::raw::RawQueue;
+pub use crate::raw::RawChannel;
