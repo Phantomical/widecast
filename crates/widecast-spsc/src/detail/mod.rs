@@ -58,6 +58,10 @@ impl<T> Shared<T> {
         self.tail.load(Ordering::Acquire)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.head() == self.tail()
+    }
+
     fn update_tail(&self, tail: u64) {
         self.tail.store(tail, Ordering::Release);
     }

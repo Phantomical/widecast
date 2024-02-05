@@ -23,6 +23,16 @@ impl<T> Reader<T> {
         }
     }
 
+    /// Get the saved tail value stored in this reader.
+    ///
+    /// This will always be equivalent to the tail value stored in [`Shared`].
+    ///
+    /// This is likely to be slightly faster than reading it from [`Shared`]
+    /// because it does not need to perform an atomic load.
+    pub fn tail(&self) -> u64 {
+        self.tail
+    }
+
     /// Acquire a range of indices in preparation from removing them from the
     /// queue.
     ///
@@ -41,9 +51,9 @@ impl<T> Reader<T> {
         let target = self.tail.max(watermark);
         let start = std::mem::replace(&mut self.tail, target);
 
-        // if target != start {
-        shared.update_tail(target);
-        // }
+        if target != start {
+            shared.update_tail(target);
+        }
 
         (start..target, chunk)
     }

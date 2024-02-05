@@ -6,18 +6,18 @@ cfg_if! {
         mod loom;
 
         pub(crate) use ::loom::cell::UnsafeCell;
-        pub(crate) use ::loom::sync::atomic::AtomicU64;
+        pub(crate) use ::loom::sync::atomic::{AtomicU64, AtomicBool};
         pub(crate) use ::loom::sync::Arc;
 
         pub(crate) use self::loom::{ArcSwap, Guard};
     } else {
         mod util;
 
-        pub(crate) use std::sync::atomic::AtomicU64;
+        pub(crate) use std::sync::atomic::{AtomicU64, AtomicBool};
         pub(crate) use std::sync::Arc;
-    
+
         pub(crate) use arc_swap::{ArcSwap, Guard};
-    
+
         pub(crate) use self::util::UnsafeCell;
     }
 }

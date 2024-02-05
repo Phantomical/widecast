@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use loom::thread;
-use widecast_spsc::raw::RawQueue;
+use widecast_spsc::RawQueue;
 
 #[test]
 fn concurrent_send_and_drain() {
@@ -46,7 +46,10 @@ fn concurrent_send_and_drain_multiple() {
         // No extraneous values received.
         assert!(recvd.len() <= 32);
         // Values received in-order.
-        assert!(recvd.iter().enumerate().all(|(idx, &val)| idx == val), "{recvd:?}");
+        assert!(
+            recvd.iter().enumerate().all(|(idx, &val)| idx == val),
+            "{recvd:?}"
+        );
     })
 }
 

@@ -5,10 +5,11 @@
 #[macro_use]
 extern crate cfg_if;
 
+mod channel;
 mod detail;
-pub mod raw;
+mod raw;
 mod shim;
 
+pub use crate::channel::*;
 pub use crate::detail::Drain;
-
-// use self::shim as sync;
+pub use crate::raw::RawQueue;
