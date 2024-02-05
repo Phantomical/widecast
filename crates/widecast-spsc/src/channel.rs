@@ -254,3 +254,9 @@ impl fmt::Display for DrainError {
 }
 
 impl Error for DrainError {}
+
+impl From<DrainError> for RecvError {
+    fn from(_: DrainError) -> Self {
+        Self::Disconnected
+    }
+}
