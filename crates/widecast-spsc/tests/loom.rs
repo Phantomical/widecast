@@ -96,3 +96,24 @@ fn concurrent_send_and_recv() {
         assert!(recvd.iter().enumerate().all(|(idx, &val)| idx == val));
     })
 }
+
+#[test]
+fn concurrent_send_and_drain_to() {
+    loom::model(|| {
+        let v1 = Arc::new(RawChannel::<usize>::with_capacity(2));
+        let v2 = v1.clone();
+
+        thread::spawn(move || {
+            for i in 0..4 {
+                unsafe { v1.push(i) };
+            }
+        });
+
+        let recvd: Vec<_> = unsafe { v2.drain_to(2).collect() };
+
+        // No extraneous values received.
+        assert!(recvd.len() <= 2);
+        // Values received in-order.
+        assert!(recvd.iter().enumerate().all(|(idx, &val)| idx == val));
+    })
+}
